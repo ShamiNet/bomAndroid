@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:bom/firebase_options.dart'; // تأكد من وجود هذا الملف
 import 'package:bom/services/export_service.dart';
-import 'package:bom/screens/map_screen.dart'; // شاشة الخرائط
+import 'package:bom/screens/map_screen.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // شاشة الخرائط
 // import 'package:bom/screens/splash_screen.dart'; // يمكنك تفعيلها لاحقاً
 
 void main() async {
@@ -24,7 +25,7 @@ void main() async {
     debugPrint("Firebase init error: $e");
   }
 
-  runApp(const MyApp());
+  runApp(const ProviderScope(child: MyApp()));
 }
 
 class MyApp extends StatelessWidget {

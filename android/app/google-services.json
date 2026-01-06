@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "846586333589",
+    "project_id": "drone-academy-13a5f",
+    "storage_bucket": "drone-academy-13a5f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:846586333589:android:49e6105482393c6a154e9c",
+        "android_client_info": {
+          "package_name": "com.drone.academy"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCLSJYNZmpC2_KDUJoArGjC4U1YccMAfq0"
+        },
+        {
+          "current_key": "AIzaSyA8qPlhyuhjeZNTmYQCiVjIaFvfl8KWnXo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:846586333589:android:d48394c1ec86132f154e9c",
+        "android_client_info": {
+          "package_name": "com.s313.bomandroid"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCLSJYNZmpC2_KDUJoArGjC4U1YccMAfq0"
+        },
+        {
+          "current_key": "AIzaSyA8qPlhyuhjeZNTmYQCiVjIaFvfl8KWnXo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

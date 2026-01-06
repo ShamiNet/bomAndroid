@@ -1,50 +1,34 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:ui'; // مكتبة مضافة لدعم تأثيرات التغبيش (Blur)
+import 'dart:ui'; // لدعم تأثيرات التغبيش (Blur)
+import 'package:bom/screens/admin_screen.dart';
+import 'package:bom/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // مكتبة Riverpod
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:math' show max, min, cos, pi;
 import 'package:proj4dart/proj4dart.dart' as proj4;
 
 import 'package:bom/models/distance_measurement.dart';
+import 'package:bom/models/emplacement.dart';
 import 'package:bom/services/map_utils.dart';
 import 'package:bom/widgets/measurement_card.dart';
 import 'package:bom/screens/web_view_screen.dart';
 import 'package:bom/screens/web_tabs_screen.dart';
 import 'package:bom/services/export_service.dart';
+import 'package:bom/providers/emplacement_provider.dart'; // مزود المرابض
+import 'package:bom/providers/measurement_provider.dart'; // مزود القياسات الجديد
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-// --- نموذج بيانات المربض (Emplacement) ---
-class Emplacement {
-  final String id;
-  final String name;
-  final LatLng location;
-
-  Emplacement({required this.id, required this.name, required this.location});
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'lat': location.latitude,
-        'lng': location.longitude,
-      };
-
-  static Emplacement fromJson(Map<String, dynamic> json) => Emplacement(
-        id: json['id'],
-        name: json['name'],
-        location: LatLng(json['lat'], json['lng']),
-      );
-}
-// ----------------------------------------
-
-class MapScreen extends StatefulWidget {
+class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
 
   @override
-  State<MapScreen> createState() => _MapScreenState();
+  ConsumerState<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends ConsumerState<MapScreen> {
   LatLng? _centerLatLng;
   proj4.Point? _centerUtmCache;
   DateTime? _lastCameraUpdate;
@@ -56,7 +40,8 @@ class _MapScreenState extends State<MapScreen> {
 
   final Set<Marker> _markers = {};
   final Set<Polyline> _polylines = {};
-  final List<DistanceMeasurement> _distanceMeasurements = [];
+  // تم حذف _distanceMeasurements المحلية واستبدالها بالمزود
+
   bool _showDistanceList = false;
   MapType _currentMapType = MapType.normal;
   DistanceMeasurement? _selectedMeasurement;
@@ -69,7 +54,6 @@ class _MapScreenState extends State<MapScreen> {
   Timer? _timer;
   SharedPreferences? _prefs;
 
-  List<Emplacement> _emplacements = [];
   String? _activeEmplacementId;
 
   @override
@@ -77,8 +61,9 @@ class _MapScreenState extends State<MapScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadCameraPosition();
-      _loadMeasurements();
-      _loadEmplacements();
+      // لم نعد بحاجة لاستدعاء دوال التحميل يدوياً، المزودات تقوم بذلك
+      // تشغيل الفحص الأمني
+      _checkAppHealth();
     });
   }
 
@@ -86,6 +71,68 @@ class _MapScreenState extends State<MapScreen> {
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _checkAppHealth() async {
+    final config = await ApiService().getAppConfig();
+    if (config == null) return;
+
+    // 1. فحص وضع الصيانة
+    if (config['isMaintenance'] == true) {
+      _showBlockingDialog('عفواً',
+          'التطبيق في وضع الصيانة حالياً. يرجى المحاولة لاحقاً.', false);
+      return;
+    }
+
+    // 2. فحص الإصدار
+    PackageInfo packageInfo = await PackageInfo.fromPlatform();
+    String currentVersion = packageInfo.version; // مثلاً "1.0.0"
+    String minVersion = config['minVersion'] ?? "0.0.0";
+
+    if (_isVersionLower(currentVersion, minVersion)) {
+      _showBlockingDialog('تحديث إجباري',
+          'يوجد إصدار جديد من التطبيق. يجب التحديث للمتابعة.', true,
+          url: config['updateUrl']);
+    }
+  }
+
+// دالة لمقارنة الإصدارات (بسيطة)
+  bool _isVersionLower(String current, String min) {
+    // يمكن تعقيدها أكثر، لكن مبدئياً سنقارن كنصوص إذا كانت النسق ثابت
+    return current.compareTo(min) < 0;
+  }
+
+  void _showBlockingDialog(String title, String content, bool isUpdate,
+      {String? url}) {
+    showDialog(
+      context: context,
+      barrierDismissible: false, // يمنع إغلاق النافذة
+      builder: (ctx) => WillPopScope(
+        onWillPop: () async => false, // يمنع زر الرجوع
+        child: AlertDialog(
+          title: Text(title, style: const TextStyle(color: Colors.red)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(isUpdate ? Icons.system_update : Icons.warning,
+                  size: 50, color: Colors.orange),
+              const SizedBox(height: 10),
+              Text(content, textAlign: TextAlign.center),
+            ],
+          ),
+          actions: [
+            if (isUpdate && url != null && url.isNotEmpty)
+              ElevatedButton(
+                onPressed: () {
+                  launchUrl(Uri.parse(url),
+                      mode: LaunchMode.externalApplication);
+                },
+                child: const Text('تحديث الآن'),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _loadCameraPosition() async {
@@ -124,50 +171,7 @@ class _MapScreenState extends State<MapScreen> {
     prefs.setDouble('camera_zoom', position.zoom);
   }
 
-  Future<void> _loadMeasurements() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    final prefs = _prefs!;
-    final data = prefs.getStringList('distance_measurements');
-    if (data != null) {
-      setState(() {
-        _distanceMeasurements.clear();
-        _distanceMeasurements.addAll(
-          data
-              .map((e) => DistanceMeasurement.fromJson(json.decode(e)))
-              .toList(),
-        );
-        _updateMarkers();
-        _updatePolylines();
-      });
-    }
-  }
-
-  Future<void> _saveMeasurements() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    final prefs = _prefs!;
-    final data =
-        _distanceMeasurements.map((e) => json.encode(e.toJson())).toList();
-    prefs.setStringList('distance_measurements', data);
-  }
-
-  Future<void> _loadEmplacements() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    final prefs = _prefs!;
-    final data = prefs.getStringList('saved_emplacements');
-    if (data != null) {
-      setState(() {
-        _emplacements =
-            data.map((e) => Emplacement.fromJson(json.decode(e))).toList();
-      });
-    }
-  }
-
-  Future<void> _saveEmplacements() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    final prefs = _prefs!;
-    final data = _emplacements.map((e) => json.encode(e.toJson())).toList();
-    await prefs.setStringList('saved_emplacements', data);
-  }
+  // --- دوال إدارة المرابض ---
 
   Future<void> _addEmplacement() async {
     if (_centerLatLng == null) return;
@@ -201,29 +205,23 @@ class _MapScreenState extends State<MapScreen> {
     );
 
     if (result != null && result.trim().isNotEmpty) {
-      final newEmplacement = Emplacement(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        name: result.trim(),
-        location: _centerLatLng!,
-      );
-      setState(() {
-        _emplacements.add(newEmplacement);
-      });
-      _saveEmplacements();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حفظ المربض بنجاح')),
-      );
+      await ref
+          .read(emplacementsProvider.notifier)
+          .addEmplacement(result.trim(), _centerLatLng!);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم حفظ المربض بنجاح')),
+        );
+      }
     }
   }
 
   void _deleteEmplacement(String id) {
-    setState(() {
-      _emplacements.removeWhere((e) => e.id == id);
-      if (_activeEmplacementId == id) {
-        _deactivateEmplacement();
-      }
-    });
-    _saveEmplacements();
+    if (_activeEmplacementId == id) {
+      _deactivateEmplacement();
+    }
+    ref.read(emplacementsProvider.notifier).deleteEmplacement(id);
   }
 
   void _activateEmplacement(Emplacement emp) {
@@ -234,7 +232,7 @@ class _MapScreenState extends State<MapScreen> {
       _fixFirstPoint = true;
       _isCorrectionMode = false;
       _impactPoint = null;
-      _updateMarkers();
+      // تحديث العلامات سيتم استدعاؤه تلقائياً عند إعادة البناء
     });
     _controller.future.then((c) {
       c.animateCamera(CameraUpdate.newLatLng(emp.location));
@@ -252,7 +250,6 @@ class _MapScreenState extends State<MapScreen> {
       _tappedPoints.clear();
       _isCorrectionMode = false;
       _impactPoint = null;
-      _updateMarkers();
     });
     if (Navigator.canPop(context)) Navigator.pop(context);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -267,8 +264,10 @@ class _MapScreenState extends State<MapScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
+        return Consumer(
+          builder: (context, ref, child) {
+            final emplacementsList = ref.watch(emplacementsProvider);
+
             return Container(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -294,7 +293,7 @@ class _MapScreenState extends State<MapScreen> {
                     ],
                   ),
                   const Divider(),
-                  if (_emplacements.isEmpty)
+                  if (emplacementsList.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(20),
                       child: Text('لا يوجد مرابض محفوظة'),
@@ -302,9 +301,9 @@ class _MapScreenState extends State<MapScreen> {
                   else
                     Expanded(
                       child: ListView.builder(
-                        itemCount: _emplacements.length,
+                        itemCount: emplacementsList.length,
                         itemBuilder: (context, index) {
-                          final emp = _emplacements[index];
+                          final emp = emplacementsList[index];
                           final isActive = emp.id == _activeEmplacementId;
                           return ListTile(
                             leading: Icon(
@@ -333,7 +332,6 @@ class _MapScreenState extends State<MapScreen> {
                                       color: Colors.red),
                                   onPressed: () {
                                     _deleteEmplacement(emp.id);
-                                    setSheetState(() {});
                                   },
                                 ),
                               ],
@@ -354,6 +352,8 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  // --- دوال إدارة القياسات (معدلة لاستخدام المزود) ---
+
   void _createAndSaveMeasurement(LatLng p1, LatLng p2, {String? note}) {
     final double distance = calculateDistance(p1, p2);
     final Map<String, double> disp = calculateDisplacement(p1, p2);
@@ -372,21 +372,21 @@ class _MapScreenState extends State<MapScreen> {
       deltaEastMeters: disp['deltaEastMeters']!,
       azimuthMils: mils,
       timestampMillis: DateTime.now().millisecondsSinceEpoch,
-      note: note, // تمرير الملاحظة هنا
-      emplacementId: _activeEmplacementId, // تمرير معرف المربض
+      note: note,
+      emplacementId: _activeEmplacementId,
     );
 
-    _distanceMeasurements.add(measurement);
-    _saveMeasurements();
+    // إضافة القياس عبر المزود
+    ref.read(measurementsProvider.notifier).addMeasurement(measurement);
   }
 
-  // دالة لإظهار نافذة إدخال UTM
+  // --- باقي الدوال المساعدة ---
+
   void _showUtmInputDialog() {
     final xController = TextEditingController();
     final yController = TextEditingController();
-    final zoneController =
-        TextEditingController(text: '37'); // المنطقة الافتراضية
-    String selectedType = 'emplacement'; // القيم: emplacement, target, impact
+    final zoneController = TextEditingController(text: '37');
+    String selectedType = 'emplacement';
 
     showDialog(
       context: context,
@@ -404,7 +404,6 @@ class _MapScreenState extends State<MapScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // اختيار نوع النقطة
                   DropdownButton<String>(
                     value: selectedType,
                     isExpanded: true,
@@ -422,7 +421,6 @@ class _MapScreenState extends State<MapScreen> {
                     },
                   ),
                   const SizedBox(height: 15),
-                  // حقول الإدخال
                   TextField(
                     controller: xController,
                     keyboardType: TextInputType.number,
@@ -467,13 +465,9 @@ class _MapScreenState extends State<MapScreen> {
                 final double y = double.parse(yController.text.trim());
                 final int zone = int.parse(zoneController.text.trim());
 
-                // 1. التحويل من UTM إلى LatLng
                 final LatLng point = convertUtmToLatLng(x, y, zone);
-
-                // 2. معالجة النقطة حسب النوع المختار
                 _handleAddUtmPoint(point, selectedType);
 
-                // تحريك الكاميرا للموقع الجديد
                 final controller = await _controller.future;
                 controller.animateCamera(CameraUpdate.newLatLng(point));
 
@@ -491,41 +485,34 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // دالة مساعدة لمعالجة النقطة المضافة
   void _handleAddUtmPoint(LatLng point, String type) {
     setState(() {
       if (type == 'emplacement') {
-        // إذا كان مربضاً، نضعه في بداية القائمة
         if (_tappedPoints.isNotEmpty) {
-          // إذا كان هناك نقاط بالفعل، نستبدل الأولى
           _tappedPoints[0] = point;
         } else {
           _tappedPoints.add(point);
         }
-        // تنظيف ما بعده لضمان التسلسل الصحيح
         if (_tappedPoints.length > 2) {
-          // نحتفظ فقط بالمربض والهدف إذا أضفنا مربض جديد
           final p2 = _tappedPoints[1];
           _tappedPoints.clear();
           _tappedPoints.add(point);
           _tappedPoints.add(p2);
         }
       } else if (type == 'target') {
-        // الهدف هو النقطة الثانية
         if (_tappedPoints.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('يرجى تحديد المربض أولاً!')),
           );
-          return; // لا يمكن إضافة هدف بدون مربض
+          return;
         }
 
         if (_tappedPoints.length >= 2) {
-          _tappedPoints[1] = point; // تحديث الهدف الموجود
+          _tappedPoints[1] = point;
         } else {
-          _tappedPoints.add(point); // إضافة هدف جديد
+          _tappedPoints.add(point);
         }
 
-        // إذا اكتملت النقطتان، نقوم بإنشاء القياس
         if (_tappedPoints.length == 2) {
           _createAndSaveMeasurement(_tappedPoints[0], _tappedPoints[1],
               note: null);
@@ -534,7 +521,6 @@ class _MapScreenState extends State<MapScreen> {
           );
         }
       } else if (type == 'impact') {
-        // نقطة السقوط (للتصحيح)
         if (_tappedPoints.length < 2) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -545,19 +531,13 @@ class _MapScreenState extends State<MapScreen> {
 
         _impactPoint = point;
         _isCorrectionMode = true;
-        _updateMarkers();
-        _updatePolylines();
+        // سيتم التحديث تلقائياً بسبب setState
 
-        // إجراء الحساب فوراً
         Future.delayed(const Duration(milliseconds: 500), () {
           _calculateCorrection();
         });
-        return; // الخروج لأن التحديث تم
+        return;
       }
-
-      // تحديث العلامات والخطوط للحالات العادية
-      _updateMarkers();
-      _updatePolylines();
     });
   }
 
@@ -617,7 +597,6 @@ class _MapScreenState extends State<MapScreen> {
           ],
         ),
         actions: [
-          // زر حفظ التصحيح - تم إعادته
           TextButton.icon(
             icon: const Icon(Icons.save_alt),
             label: const Text("حفظ التصحيح"),
@@ -653,18 +632,15 @@ class _MapScreenState extends State<MapScreen> {
     final LatLng pointToAdd =
         _addFromCenter && _centerLatLng != null ? _centerLatLng! : latLng;
 
-    // 1. منطق وضع التصحيح (إذا كان مفعلاً)
     if (_isCorrectionMode && _tappedPoints.length >= 2) {
       setState(() {
         _impactPoint = pointToAdd;
-        _updateMarkers();
       });
       _calculateCorrection();
       return;
     }
 
     setState(() {
-      // 2. منطق الحفاظ على النقاط
       if (_tappedPoints.length >= 2) {
         if (_fixFirstPoint || _activeEmplacementId != null) {
           _tappedPoints.removeLast();
@@ -677,24 +653,29 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       if (_activeEmplacementId != null && _tappedPoints.isEmpty) {
-        final emp =
-            _emplacements.firstWhere((e) => e.id == _activeEmplacementId!);
-        _tappedPoints.add(emp.location);
+        final emplacementsList = ref.read(emplacementsProvider);
+        try {
+          final emp =
+              emplacementsList.firstWhere((e) => e.id == _activeEmplacementId!);
+          _tappedPoints.add(emp.location);
+        } catch (e) {
+          _activeEmplacementId = null;
+        }
       }
 
       if (_tappedPoints.isNotEmpty && _tappedPoints.last == pointToAdd) return;
 
       _tappedPoints.add(pointToAdd);
-      _updatePolylines();
+
+      // لا نحتاج لاستدعاء _updateMarkers يدوياً في كل مرة إذا كانت العلامات تعتمد فقط على القياسات،
+      // ولكن هنا تعتمد على _tappedPoints أيضاً، لذا يجب استدعاء setState.
 
       if (_tappedPoints.length == 2) {
         final LatLng p1 = _tappedPoints[0];
         final LatLng p2 = _tappedPoints[1];
 
-        // حفظ القياس العادي (بدون ملاحظات)
         _createAndSaveMeasurement(p1, p2, note: null);
 
-        // الحفاظ على النقاط ليظهر زر التصحيح
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -705,7 +686,6 @@ class _MapScreenState extends State<MapScreen> {
           );
         }
       }
-      _updateMarkers();
     });
   }
 
@@ -721,7 +701,6 @@ class _MapScreenState extends State<MapScreen> {
 
       if (id == 'impact_point') {
         _impactPoint = null;
-        _updateMarkers();
         return;
       }
 
@@ -732,7 +711,6 @@ class _MapScreenState extends State<MapScreen> {
           _impactPoint = null;
         }
       }
-      _updateMarkers();
     });
   }
 
@@ -745,14 +723,12 @@ class _MapScreenState extends State<MapScreen> {
       } else {
         _tappedPoints.clear();
       }
-      _distanceMeasurements.clear();
       _selectedMeasurement = null;
       _impactPoint = null;
       _isCorrectionMode = false;
-      _updateMarkers();
-      _updatePolylines();
     });
-    _saveMeasurements();
+    // مسح القياسات عبر المزود
+    ref.read(measurementsProvider.notifier).clearMeasurements();
   }
 
   void _toggleMapType() {
@@ -770,11 +746,11 @@ class _MapScreenState extends State<MapScreen> {
   void _togglePathVisibility() {
     setState(() {
       _showPath = !_showPath;
-      _updatePolylines();
     });
   }
 
-  void _updateMarkers() {
+  // هذه الدالة تم تحديثها لتقرأ القياسات من المزود مباشرة
+  Set<Marker> _getMarkers(List<DistanceMeasurement> measurements) {
     final center = _centerLatLng;
     const double thresholdMeters = 50000;
     const double clusterRadiusMeters = 200;
@@ -837,7 +813,8 @@ class _MapScreenState extends State<MapScreen> {
               ));
     }
 
-    for (var measurement in _distanceMeasurements) {
+    // هنا نستخدم قائمة القياسات الممررة للدالة
+    for (var measurement in measurements) {
       addPointToCells(
           measurement.point1,
           'start_${measurement.point1.hashCode}',
@@ -881,9 +858,7 @@ class _MapScreenState extends State<MapScreen> {
             }));
       }
     });
-
-    _markers.clear();
-    _markers.addAll(newMarkers);
+    return newMarkers;
   }
 
   void _updatePolylines() {
@@ -937,7 +912,6 @@ class _MapScreenState extends State<MapScreen> {
     return "$minutes:$seconds";
   }
 
-  // --- دالة معدلة لإنشاء أزرار ثلاثية الأبعاد (3D Style) ---
   Widget _buildSideButton({
     required IconData icon,
     required VoidCallback onPressed,
@@ -946,13 +920,10 @@ class _MapScreenState extends State<MapScreen> {
     Color backgroundColor = Colors.white,
     bool isActive = false,
   }) {
-    // تحديد الألوان بناءً على حالة التفعيل
-    final Color baseColor = isActive ? color : backgroundColor;
     final Color iconColor = isActive ? Colors.white : color;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 15),
-      // تصميم الزر ليبدو مجسماً (3D)
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: LinearGradient(
@@ -969,13 +940,11 @@ class _MapScreenState extends State<MapScreen> {
                 ],
         ),
         boxShadow: [
-          // ظل خارجي عميق
           BoxShadow(
             color: Colors.black.withOpacity(0.3),
             blurRadius: 8,
             offset: const Offset(4, 4),
           ),
-          // إضاءة علوية (Highlight)
           BoxShadow(
             color: Colors.white.withOpacity(0.9),
             blurRadius: 4,
@@ -1015,7 +984,6 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // --- دالة مساعدة لإنشاء صناديق المعلومات الزجاجية ---
   Widget _buildGlassInfoBox(BuildContext context, {required Widget child}) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
@@ -1024,7 +992,7 @@ class _MapScreenState extends State<MapScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.6), // خلفية داكنة نصف شفافة
+            color: Colors.black.withOpacity(0.6),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: Colors.white.withOpacity(0.2),
@@ -1043,7 +1011,7 @@ class _MapScreenState extends State<MapScreen> {
               color: Colors.white,
               fontWeight: FontWeight.bold,
               fontSize: 13,
-              fontFamily: 'Roboto', // خط نظيف
+              fontFamily: 'Roboto',
               shadows: [
                 Shadow(
                   blurRadius: 2,
@@ -1064,16 +1032,22 @@ class _MapScreenState extends State<MapScreen> {
     if (_initialCameraPosition == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    final screenWidth = MediaQuery.of(context).size.width;
 
+    // 1. الاستماع للقياسات من المزود
+    final distanceMeasurements = ref.watch(measurementsProvider);
+
+    // 2. تحديث العلامات بناءً على القياسات الجديدة
+    // ملاحظة: لتحسين الأداء، يمكن استخدام useMemoized أو similar إذا كان الحساب مكلفاً
+    final currentMarkers = _getMarkers(distanceMeasurements);
+
+    final screenWidth = MediaQuery.of(context).size.width;
     bool canCorrect = _tappedPoints.length >= 2;
 
     return Scaffold(
-      extendBodyBehindAppBar: true, // يجعل الخريطة تمتد خلف البار العلوي
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         elevation: 0,
-        backgroundColor:
-            Colors.transparent, // شفاف ليعمل مع extendBodyBehindAppBar
+        backgroundColor: Colors.transparent,
         flexibleSpace: ClipRRect(
           borderRadius: const BorderRadius.vertical(bottom: Radius.circular(0)),
           child: BackdropFilter(
@@ -1116,7 +1090,6 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ),
         actions: [
-          // 1. زر إدارة المرابض
           IconButton(
             icon: Icon(
               Icons.fort,
@@ -1129,8 +1102,6 @@ class _MapScreenState extends State<MapScreen> {
             tooltip: 'إدارة المرابض',
             onPressed: _showEmplacementsDialog,
           ),
-
-          // 2. مؤشر التسجيل
           if (_isRecording)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
@@ -1156,15 +1127,11 @@ class _MapScreenState extends State<MapScreen> {
                 ),
               ),
             ),
-
-          // 3. زر إضافة إحداثيات UTM
           IconButton(
             icon: const Icon(Icons.add_location_alt_outlined),
             tooltip: 'إضافة UTM',
             onPressed: _showUtmInputDialog,
           ),
-
-          // 4. زر فتح الويب
           IconButton(
             icon: const Icon(Icons.language),
             tooltip: 'فتح ويب',
@@ -1205,8 +1172,6 @@ class _MapScreenState extends State<MapScreen> {
               }
             },
           ),
-
-          // 5. زر التبويبات
           IconButton(
             icon: const Icon(Icons.tab),
             tooltip: 'Tabs',
@@ -1217,14 +1182,20 @@ class _MapScreenState extends State<MapScreen> {
               );
             },
           ),
-
-          // 6. زر تصدير PDF
+          IconButton(
+            icon: const Icon(Icons.admin_panel_settings),
+            onPressed: () {
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const AdminScreen()));
+            },
+          ),
           IconButton(
             icon: Icon(Icons.picture_as_pdf),
             tooltip: 'تصدير PDF',
             onPressed: () {
+              // التحقق من قائمة القياسات (من المزود)
               if (_selectedMeasurement == null &&
-                  _distanceMeasurements.isEmpty) {
+                  distanceMeasurements.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('لا يوجد قياسات')),
                 );
@@ -1262,7 +1233,7 @@ class _MapScreenState extends State<MapScreen> {
                                 );
                               },
                             ),
-                            if (_distanceMeasurements.isNotEmpty)
+                            if (distanceMeasurements.isNotEmpty)
                               ListTile(
                                 leading: const Icon(Icons.library_books),
                                 title: const Text('تصدير جميع القياسات'),
@@ -1270,7 +1241,7 @@ class _MapScreenState extends State<MapScreen> {
                                   Navigator.pop(ctx);
                                   exportService.exportAllMeasurementsToPdf(
                                     context: context,
-                                    measurements: _distanceMeasurements,
+                                    measurements: distanceMeasurements,
                                     title: 'جميع القياسات',
                                     description: 'تطبيق القياس',
                                     saveToDownloads: true,
@@ -1293,11 +1264,9 @@ class _MapScreenState extends State<MapScreen> {
           GoogleMap(
             mapType: _currentMapType,
             initialCameraPosition: _initialCameraPosition!,
-            // --- تفعيل الخصائص ثلاثية الأبعاد ---
-            tiltGesturesEnabled: true, // السماح بإمالة الخريطة
-            buildingsEnabled: true, // إظهار المباني المجسمة
+            tiltGesturesEnabled: true,
+            buildingsEnabled: true,
             compassEnabled: true,
-            // ------------------------------------
             onMapCreated: (GoogleMapController controller) {
               _controller.complete(controller);
             },
@@ -1320,7 +1289,7 @@ class _MapScreenState extends State<MapScreen> {
                 });
               }
             },
-            markers: _markers,
+            markers: currentMarkers, // استخدام العلامات المولدة من المزود
             polylines: _polylines,
             myLocationButtonEnabled: false,
             myLocationEnabled: false,
@@ -1328,11 +1297,9 @@ class _MapScreenState extends State<MapScreen> {
             zoomControlsEnabled: false,
             zoomGesturesEnabled: true,
           ),
-
-          // --- عرض الإحداثيات (نمط HUD زجاجي) ---
           Positioned(
             left: 10,
-            top: 100, // تم التعديل لأن الـ AppBar شفاف الآن
+            top: 100,
             child: _buildGlassInfoBox(
               context,
               child: Text(
@@ -1345,7 +1312,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
           Positioned(
             left: 10,
-            top: 140, // مسافة أسفل المربع الأول
+            top: 140,
             child: _buildGlassInfoBox(
               context,
               child: Builder(
@@ -1376,15 +1343,12 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
           ),
-
-          // --- القائمة الجانبية (3D Buttons) ---
           Positioned(
-            top: 100, // مقابل الإحداثيات
+            top: 100,
             right: 15,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 1. زر نوع الخريطة
                 _buildSideButton(
                   icon: Icons.satellite_alt_outlined,
                   tooltip: 'تغيير نوع الخريطة',
@@ -1392,8 +1356,6 @@ class _MapScreenState extends State<MapScreen> {
                   color: Colors.blue.shade700,
                   isActive: _currentMapType != MapType.normal,
                 ),
-
-                // 2. زر إظهار/إخفاء قائمة القياسات
                 _buildSideButton(
                   icon: _showDistanceList
                       ? Icons.layers_clear_outlined
@@ -1408,8 +1370,6 @@ class _MapScreenState extends State<MapScreen> {
                   isActive: _showDistanceList,
                   color: Colors.amber.shade700,
                 ),
-
-                // 3. زر تثبيت النقطة الأولى
                 _buildSideButton(
                   icon:
                       _fixFirstPoint ? Icons.push_pin : Icons.push_pin_outlined,
@@ -1432,8 +1392,6 @@ class _MapScreenState extends State<MapScreen> {
                   isActive: _fixFirstPoint,
                   color: Colors.red.shade700,
                 ),
-
-                // 4. زر وضع المركز (التصويب)
                 _buildSideButton(
                   icon: _addFromCenter ? Icons.gps_fixed : Icons.gps_not_fixed,
                   tooltip:
@@ -1446,8 +1404,6 @@ class _MapScreenState extends State<MapScreen> {
                   isActive: _addFromCenter,
                   color: Colors.green.shade700,
                 ),
-
-                // 5. زر إظهار المسار
                 if (_selectedMeasurement != null)
                   _buildSideButton(
                     icon: _showPath
@@ -1461,8 +1417,6 @@ class _MapScreenState extends State<MapScreen> {
               ],
             ),
           ),
-
-          // --- إشارة التصويب في المنتصف ---
           Align(
             alignment: Alignment.center,
             child: Container(
@@ -1481,14 +1435,11 @@ class _MapScreenState extends State<MapScreen> {
                   color: Color(0xFF00796B), size: 10),
             ),
           ),
-
-          // --- القائمة الجانبية المنبثقة للقياسات ---
           AnimatedPositioned(
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeInOut,
             top: 0,
             bottom: 0,
-            // تغيير الاتجاه ليكون من اليسار لليمين أو تغطية كاملة حسب الرغبة، هنا أبقيته كما هو
             right: _showDistanceList ? 0 : -screenWidth,
             width: screenWidth * 0.85,
             child: ClipRRect(
@@ -1521,7 +1472,7 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                   child: Column(
                     children: [
-                      const SizedBox(height: 50), // مساحة للـ AppBar
+                      const SizedBox(height: 50),
                       Padding(
                         padding: const EdgeInsets.all(16.0),
                         child: Text(
@@ -1543,29 +1494,32 @@ class _MapScreenState extends State<MapScreen> {
                       ),
                       const Divider(indent: 16, endIndent: 16),
                       Expanded(
-                        child: _distanceMeasurements.isEmpty
+                        child: distanceMeasurements.isEmpty
                             ? const Center(
                                 child: Text('لا توجد قياسات محفوظة.'))
                             : ListView.builder(
-                                itemCount: _distanceMeasurements.length,
+                                itemCount: distanceMeasurements.length,
                                 itemBuilder: (context, index) {
                                   final measurement =
-                                      _distanceMeasurements[index];
+                                      distanceMeasurements[index];
 
                                   return Dismissible(
                                     key: Key(measurement.hashCode.toString()),
                                     direction: DismissDirection.endToStart,
                                     onDismissed: (direction) {
+                                      // الحذف عبر المزود
+                                      ref
+                                          .read(measurementsProvider.notifier)
+                                          .deleteMeasurement(measurement);
+
                                       setState(() {
-                                        _distanceMeasurements.removeAt(index);
                                         if (_selectedMeasurement ==
                                             measurement) {
                                           _selectedMeasurement = null;
                                         }
-                                        _updateMarkers();
                                         _updatePolylines();
                                       });
-                                      _saveMeasurements();
+
                                       ScaffoldMessenger.of(context)
                                           .showSnackBar(
                                         const SnackBar(
@@ -1604,7 +1558,6 @@ class _MapScreenState extends State<MapScreen> {
                                         decoration: BoxDecoration(
                                           borderRadius:
                                               BorderRadius.circular(15.0),
-                                          // تأثير البطاقة
                                           gradient: LinearGradient(
                                             begin: Alignment.topLeft,
                                             end: Alignment.bottomRight,
@@ -1659,13 +1612,11 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
           ),
-
-          // --- رسالة وضع التصحيح (تنبيه HUD) ---
           if (_isCorrectionMode)
             Positioned(
-              top: 200, // تحت الأزرار العلوية
+              top: 200,
               left: 30,
-              right: 400, // مساحة للأزرار الجانبية
+              right: 400,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(15),
                 child: BackdropFilter(
@@ -1713,7 +1664,6 @@ class _MapScreenState extends State<MapScreen> {
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // --- زر التصحيح العائم ---
           if (canCorrect) ...[
             Container(
               decoration: BoxDecoration(
@@ -1739,7 +1689,6 @@ class _MapScreenState extends State<MapScreen> {
                       );
                     } else {
                       _impactPoint = null;
-                      _updateMarkers();
                     }
                   });
                 },
@@ -1749,13 +1698,11 @@ class _MapScreenState extends State<MapScreen> {
                 backgroundColor:
                     _isCorrectionMode ? Colors.redAccent : Colors.purpleAccent,
                 foregroundColor: Colors.white,
-                elevation: 0, // نستخدم الـ Shadow الخاص بنا
+                elevation: 0,
               ),
             ),
             const SizedBox(height: 12),
           ],
-
-          // --- زر مسح الكل ---
           Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(30),
@@ -1782,6 +1729,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 }
 
+// نموذج مساعد للكلاسترات (تجميع النقاط)
 class _ClusterItem {
   final LatLng point;
   final String id;

@@ -15,10 +15,10 @@
     <uses-permission android:name="android.permission.MEDIA_PROJECTION" />
     
     <application
-        android:usesCleartextTraffic="true"
         android:label="في الصميم"
         android:name="${applicationName}"
         android:enableOnBackInvokedCallback="true"
+        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher">
         
         <meta-data android:name="com.google.android.geo.API_KEY" android:value="AIzaSyBi-dsQDAcSDXGJ-zT46OLMRAaNrnB1-DY"/>

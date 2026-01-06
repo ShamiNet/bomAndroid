@@ -1,4 +1,4 @@
-package com.example.bom
+package com.s313.bomandroid
 
 import android.media.MediaScannerConnection
 import android.os.Bundle
